@@ -9,20 +9,27 @@ use  App\Http\Controllers\ProfileController ;
 use App\Http\Controllers\ParkingSpotController;
 use App\Http\Controllers\AddressController ;
 use App\Http\Controllers\OTPController;
-
+use App\Http\Controllers\ComplaintController;
+use Illuminate\Support\Facades\Log;
 use App\Services\Sms\TraccarSmsService;
+use App\Http\Controllers\BookingController;
+use App\Http\Controllers\ShamAdminAndOwnerController;
+use App\Http\Controllers\PaymentAmountController;
+use App\Http\Controllers\ShamPayOwnerController;
+/*
+|--------------------------------------------------------------------------
+| API Routes
+|--------------------------------------------------------------------------
+*/
 
-
-// Route لإرسال OTP
+// Routes العامة (بدون توكن)
 Route::post('send-otp', [OTPController::class, 'sendOtp']);
 Route::post('resend-otp', [OTPController::class, 'resendOtp']);
 Route::post('verify-otp', [OTPController::class, 'verifyOtp']);
-Route::post('reset-password', [OTPController::class, 'resetPassword']);
+Route::post('reset-password', [OtpController::class, 'resetPassword']);
 
-Route::get('test-traccar-connection', function (TraccarSmsService $sms) {
-    $result = $sms->testConnection();
-    return response()->json($result);
-});
+// Routes للاختبار
+Route::get('test-traccar', [OTPController::class, 'testTraccar']);
 /*
 --------------------------------------------------------------------
 | API Routes
@@ -37,12 +44,30 @@ Route::get('test-traccar-connection', function (TraccarSmsService $sms) {
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
-//register
-Route::post('registerUserRenter1',[Auth::class,'registerUserRenter']);
-Route::post('registerUserOwner1',[Auth::class,'registerUserOwner']);
 
-//login
-Route::post('loginUser1',[Auth::class,'loginUser']);
+//auth
+
+Route::middleware('throttle:register')->group(function () {
+    Route::post('registerUserRenter1', [Auth::class, 'registerUserRenter']);
+    Route::post('registerUserOwner1', [Auth::class, 'registerUserOwner']);
+});
+
+Route::post('loginUser1', [Auth::class, 'loginUser'])
+    ->middleware('throttle:login');
+
+
+
+
+//otp
+Route::middleware('throttle:otp-request')->group(function () {
+    Route::post('request-otp', [OtpController::class, 'request']);
+});
+
+Route::middleware('throttle:otp-verify')->group(function () {
+    Route::post('verify-otp', [OtpController::class, 'verify']);
+});
+
+Route::post('reset-password', [OtpController::class, 'resetPassword']);
 
 
 
@@ -56,9 +81,8 @@ Route::middleware('auth:sanctum')->group( function () {
 
 
 
+   Route::post('logoutUser1', [Auth::class, 'logoutUser']);
 
-
-Route::post('logoutUser1',[Auth::class,'logoutUser']);
 
  Route::post('storeParking1', [ParkingSpotController::class, 'storeParking']);
 Route::get('myParkingSpots1',[ParkingSpotController::class,'myParkingSpots']);
@@ -106,11 +130,13 @@ Route::get('deleteProfileImage',[SettingsController::class,'deleteProfileImage']
 
 //ShamCashController 
 
- Route::post('storeShamCash1', [ShamCashController::class, 'storeShamCash']);
- Route::get('getShamCash', [ShamCashController::class, 'getShamCash']);
-    
- Route::post('updateShamCash', [ShamCashController::class, 'updateShamCash']);
-    
+    Route::post('storeShamCash1', [ShamCashController::class, 'storeShamCash']);
+    Route::get('getShamCash1', [ShamCashController::class, 'getShamCash']);
+    Route::get('getShamCashByBooking/{bookingId}', [ShamCashController::class, 'getShamCashByBooking']);
+    Route::post('updateShamCash1/{id}', [ShamCashController::class, 'updateShamCash']);
+    Route::delete('deleteShamCash1', [ShamCashController::class, 'deleteShamCash']);
+
+
   //AddressController 
 
 Route::post('storeAddressOwner',[AddressController ::class,'storeAddressOwner']);
@@ -119,6 +145,108 @@ Route::get('getAddress',[AddressController ::class,'getAddress']);
 
 Route::post('updateAddress',[AddressController ::class,'updateAddress']);
 Route::get('deleteAddress',[AddressController ::class,'deleteAddress']);
+
+
+
+
+//BookingController
+
+Route::post('storeBooking1',[BookingController ::class,'storeBooking']);
+Route::get('showBooking/{id}',[BookingController ::class,'showBooking']);
+Route::get('myBookings',[BookingController ::class,'myBookings']);
+Route::get('spotBookings/{id}',[BookingController ::class,'spotBookings']);
+Route::post('updateBookingStatus/{id}',[BookingController ::class,'updateBookingStatus']);
+// طلب إلغاء الحجز (من المستأجر)
+Route::post('bookings/{id}/request-cancellation', [BookingController::class, 'requestCancellation']);
+
+// الموافقة/الرفض (من صاحب الموقف)
+Route::post('bookings/{id}/respond-cancellation', [BookingController::class, 'respondToCancellation']);
+
+//shamcashAdminAndOwner
+
+// routes/api.php
+
+
+
+
+    // إضافة معلومات الشام كاش (للـ Admin أو Owner)
+    Route::post('/store', [ShamAdminAndOwnerController::class, 'store']);
+    
+    // عرض معلومات الشام كاش للمستخدم الحالي
+    Route::get('/getMySham', [ShamAdminAndOwnerController::class, 'getMySham']);
+    
+    // عرض معلومات الشام كاش لمستخدم محدد (للمدير فقط)
+    Route::get('/getShamByUser/{userId}', [ShamAdminAndOwnerController::class, 'getShamByUser']);
+    
+    // عرض جميع معلومات الشام كاش (للمدير فقط)
+    Route::get('/getAllSham', [ShamAdminAndOwnerController::class, 'getAllSham']);
+    
+    // تحديث معلومات الشام كاش
+    Route::post('/update', [ShamAdminAndOwnerController::class, 'update']);
+    
+
+
+
+//ShamCashController
+
+// إضافة معلومات الشام كاش مع الحجز
+    Route::post('/payToOwner', [ShamCashController::class, 'store']);
+    
+    // عرض معلومات الشام كاش لحجز معين
+    Route::get('/getByBooking/{bookingId}', [ShamCashController::class, 'getByBooking']);
+
+
+
+    //PaymentAmountController
+
+
+
+   
+
+    Route::get('/indexx', [PaymentAmountController::class, 'index']);
+    
+    
+    Route::post('/updatee/{id}', [PaymentAmountController::class, 'update']);
+
+
+
+
+
+
+
+    //ShamPayOwnerController
+     // دفع صاحب الموقف
+    Route::post('/Storeshampayowner', [ShamPayOwnerController::class, 'store']);
+    
+    // عرض مدفوعات صاحب الموقف الحالي
+    Route::get('/showmypayments', [ShamPayOwnerController::class, 'getMyPayments']);
+    
+    // عرض معلومات الدفع لموقف معين
+    Route::get('/showpayowner/{parkingId}', [ShamPayOwnerController::class, 'getByParking']);
+
+
+    Route::get('/showAllpayments', [ShamPayOwnerController::class, 'getAllPayments']);
+
+
+    //otp
+       Route::post('change-password', [OtpController::class, 'changePassword']);
+
+
+
+//ComplaintController
+       // ===== الشكاوى =====
+    Route::post('complaints', [ComplaintController::class, 'store']);
+    Route::get('complaints/my', [ComplaintController::class, 'myComplaints']);
+    Route::get('complaints/{id}', [ComplaintController::class, 'show']);
+
+    // ===== للإدمن فقط =====
+    Route::get('admin/complaints', [ComplaintController::class, 'index']);
+    Route::post('admin/complaints/{id}/respond', [ComplaintController::class, 'adminRespond']);
+    Route::post('admin/complaints/{id}/status', [ComplaintController::class, 'updateStatus']);
+
+    // ===== الإشعارات =====
+    Route::get('notifications', [ComplaintController::class, 'myNotifications']);
+    Route::post('notifications/mark-as-read', [ComplaintController::class, 'markAsRead']);
 
 
 

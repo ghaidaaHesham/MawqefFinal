@@ -8,6 +8,7 @@ use App\Models\Image;
 use App\Models\Image_documents;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\NumberSham;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
@@ -1130,13 +1131,142 @@ public function getParkingSpotsByPrice(Request $request)
 
 
 
-/////////////////////////////
+// /////////////////////////////
 
-/**
- * تغيير حالة التفعيل للموقف (is_active)
- * 1 = مفعل, 0 = غير مفعل
- * فقط المدير (Admin) يمكنه تغيير الحالة
- */
+// /**
+//  * تغيير حالة التفعيل للموقف (is_active)
+//  * 1 = مفعل, 0 = غير مفعل
+//  * فقط المدير (Admin) يمكنه تغيير الحالة
+//  */
+// public function toggleActive(Request $request, $id)
+// {
+//     try {
+//         // 1. التحقق من أن المستخدم مسجل دخول
+//         $user = $request->user();
+        
+//         if (!$user) {
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
+//                 'error_type' => 'unauthenticated',
+//                 'status_code' => 401
+//             ], 401);
+//         }
+
+//         // 2. التحقق من أن المستخدم هو Admin فقط (role = 1)
+//         $userRole = Role::where('user_id', $user->id)->first();
+        
+//         if (!$userRole || $userRole->role != 1) {
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'غير مصرح لك، فقط المدير يمكنه تغيير حالة التفعيل',
+//                 'error_type' => 'unauthorized',
+//                 'status_code' => 403
+//             ], 403);
+//         }
+
+//         // 3. البحث عن الموقف
+//         $parkingSpot = Parking_spot::find($id);
+        
+//         if (!$parkingSpot) {
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'الموقف غير موجود',
+//                 'error_type' => 'not_found',
+//                 'status_code' => 404
+//             ], 404);
+//         }
+
+//         // 4. التحقق من صحة البيانات
+//         $request->validate([
+//             'is_active' => 'required|boolean',
+//         ], [
+//             'is_active.required' => 'حالة التفعيل مطلوبة',
+//             'is_active.boolean' => 'حالة التفعيل يجب أن تكون true أو false',
+//         ]);
+
+//         // 5. تغيير حالة التفعيل
+//         $oldStatus = $parkingSpot->is_active;
+//         $parkingSpot->is_active = $request->is_active;
+//         $parkingSpot->save();
+
+//         // 6. تسجيل العملية
+//         Log::info('تم تغيير حالة تفعيل الموقف بواسطة المدير', [
+//             'admin_id' => $user->id,
+//             'admin_name' => $user->name,
+//             'parking_spot_id' => $parkingSpot->id,
+//             'title' => $parkingSpot->title,
+//             'owner_id' => $parkingSpot->user_id,
+//             'old_status' => $oldStatus,
+//             'new_status' => $request->is_active,
+//             'ip' => $request->ip()
+//         ]);
+
+//         // 7. تحديد الرسالة المناسبة
+//         $statusMessage = $request->is_active == 1 ? 'مفعل' : 'غير مفعل';
+
+//         // 8. إرجاع الاستجابة
+//         return response()->json([
+//             'success' => true,
+//             'message' => "تم تغيير حالة التفعيل إلى {$statusMessage} بنجاح بواسطة المدير",
+//             'data' => [
+//                 'parking_spot' => [
+//                     'id' => $parkingSpot->id,
+//                     'title' => $parkingSpot->title,
+//                     'is_active' => $parkingSpot->is_active,
+//                     'status' => $statusMessage,
+//                 ],
+//                 'old_status' => $oldStatus,
+//                 'new_status' => $request->is_active,
+//                 'updated_by' => [
+//                     'admin_id' => $user->id,
+//                     'admin_name' => $user->name,
+//                 ],
+//                 'updated_at' => $parkingSpot->updated_at
+//             ]
+//         ], 200);
+
+//     } catch (ValidationException $e) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'فشل التحقق من البيانات',
+//             'errors' => $e->errors(),
+//             'error_type' => 'validation_error',
+//             'status_code' => 422
+//         ], 422);
+
+//     } catch (QueryException $e) {
+//         Log::error('خطأ في قاعدة البيانات أثناء تغيير حالة التفعيل', [
+//             'error' => $e->getMessage(),
+//             'user_id' => $request->user()?->id ?? null
+//         ]);
+
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'حدث خطأ في قاعدة البيانات',
+//             'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+//             'error_type' => 'database_error',
+//             'status_code' => 500
+//         ], 500);
+
+//     } catch (\Exception $e) {
+//         Log::error('خطأ في تغيير حالة التفعيل', [
+//             'error' => $e->getMessage(),
+//             'user_id' => $request->user()?->id
+//         ]);
+
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'حدث خطأ أثناء تغيير حالة التفعيل',
+//             'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+//             'error_type' => 'general_error',
+//             'status_code' => 500
+//         ], 500);
+//     }
+// }
+
+
+
 public function toggleActive(Request $request, $id)
 {
     try {
@@ -1189,7 +1319,37 @@ public function toggleActive(Request $request, $id)
         $parkingSpot->is_active = $request->is_active;
         $parkingSpot->save();
 
-        // 6. تسجيل العملية
+        // ✅ 6. إذا تم تفعيل الموقف (is_active = 1)، إنشاء سطر في جدول numbersham
+        $numberShamCreated = false;
+        $numberSham = null;
+
+        if ($request->is_active == 1) {
+            // التحقق من عدم وجود سطر سابق لهذا الموقف
+            $existingNumberSham = NumberSham::where('id_parking', $parkingSpot->id)->first();
+            
+            if (!$existingNumberSham) {
+                // إنشاء سطر جديد في جدول numbersham
+                $numberSham = NumberSham::create([
+                    'number_sham' => 0,
+                    'id_parking' => $parkingSpot->id,
+                ]);
+                $numberShamCreated = true;
+
+                Log::info('تم إنشاء سطر في جدول numbersham للموقف', [
+                    'admin_id' => $user->id,
+                    'parking_spot_id' => $parkingSpot->id,
+                    'parking_title' => $parkingSpot->title,
+                    'number_sham_id' => $numberSham->id,
+                    'number_sham' => 0,
+                    'id_parking' => $parkingSpot->id
+                ]);
+            } else {
+                // السطر موجود مسبقاً
+                $numberSham = $existingNumberSham;
+            }
+        }
+
+        // 7. تسجيل العملية
         Log::info('تم تغيير حالة تفعيل الموقف بواسطة المدير', [
             'admin_id' => $user->id,
             'admin_name' => $user->name,
@@ -1198,13 +1358,14 @@ public function toggleActive(Request $request, $id)
             'owner_id' => $parkingSpot->user_id,
             'old_status' => $oldStatus,
             'new_status' => $request->is_active,
+            'number_sham_created' => $numberShamCreated,
             'ip' => $request->ip()
         ]);
 
-        // 7. تحديد الرسالة المناسبة
+        // 8. تحديد الرسالة المناسبة
         $statusMessage = $request->is_active == 1 ? 'مفعل' : 'غير مفعل';
 
-        // 8. إرجاع الاستجابة
+        // 9. إرجاع الاستجابة
         return response()->json([
             'success' => true,
             'message' => "تم تغيير حالة التفعيل إلى {$statusMessage} بنجاح بواسطة المدير",
@@ -1215,6 +1376,12 @@ public function toggleActive(Request $request, $id)
                     'is_active' => $parkingSpot->is_active,
                     'status' => $statusMessage,
                 ],
+                'number_sham' => $numberSham ? [
+                    'id' => $numberSham->id,
+                    'number_sham' => $numberSham->number_sham,
+                    'id_parking' => $numberSham->id_parking,
+                ] : null,
+                'number_sham_created' => $numberShamCreated,
                 'old_status' => $oldStatus,
                 'new_status' => $request->is_active,
                 'updated_by' => [
@@ -1263,10 +1430,6 @@ public function toggleActive(Request $request, $id)
         ], 500);
     }
 }
-
-
-
-
 
 
 

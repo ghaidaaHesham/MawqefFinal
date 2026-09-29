@@ -5,8 +5,12 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Sham_cash;
 use App\Models\ImageShamCash;
+use App\Models\Booking;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\Parking_spot;
+use App\Models\NumberSham;
+use App\Models\PaymentAmount;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -14,155 +18,528 @@ use Illuminate\Database\QueryException;
 
 class ShamCashController extends Controller
 {
-    /**
-     * إدخال معلومات الشام كاش (الاسم وصورة QR)
-     */
-    public function storeShamCash(Request $request)
-    {
-        try {
-            // 1. التحقق من أن المستخدم مسجل دخول
-            $user = $request->user();
+    // /**
+    //  * إضافة معلومات الشام كاش (الاسم والصورة) مع ربطها بحجز معين
+    //  * فقط صاحب الحجز يمكنه الدفع بالشام كاش
+    //  */
+    // public function store(Request $request)
+    // {
+    //     try {
+    //         // 1. التحقق من أن المستخدم مسجل دخول
+    //         $user = $request->user();
             
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
-                    'error_type' => 'unauthenticated',
-                    'status_code' => 401
-                ], 401);
-            }
+    //         if (!$user) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
+    //                 'error_type' => 'unauthenticated',
+    //                 'status_code' => 401
+    //             ], 401);
+    //         }
 
-            // 2. التحقق من صحة البيانات
-            $request->validate([
-                'name_in_sham' => 'required|string|max:191',
-                'qr_image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
-            ], [
-                'name_in_sham.required' => 'الاسم في الشام كاش مطلوب',
-                'name_in_sham.string' => 'الاسم يجب أن يكون نصاً',
-                'name_in_sham.max' => 'الاسم لا يتجاوز 191 حرف',
+    //         // 2. التحقق من صحة البيانات
+    //         $request->validate([
+    //             'name_in_sham' => 'required|string|max:191',
+    //             'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+    //             'booking_id' => 'required|exists:bookings,id',
+    //         ], [
+    //             'name_in_sham.required' => 'الاسم في الشام كاش مطلوب',
+    //             'name_in_sham.string' => 'الاسم يجب أن يكون نصاً',
+    //             'name_in_sham.max' => 'الاسم لا يتجاوز 191 حرف',
                 
-                'qr_image.required' => 'صورة QR مطلوبة',
-                'qr_image.image' => 'يجب أن تكون الصورة بصيغة صورة',
-                'qr_image.mimes' => 'الصورة يجب أن تكون بصيغة: jpeg, png, jpg, gif, svg',
-                'qr_image.max' => 'حجم الصورة يجب أن لا يتجاوز 2MB',
-            ]);
+    //             'image.required' => 'صورة الدفع مطلوبة',
+    //             'image.image' => 'يجب أن تكون الصورة بصيغة صورة',
+    //             'image.mimes' => 'الصورة يجب أن تكون بصيغة: jpeg, png, jpg, gif, svg',
+    //             'image.max' => 'حجم الصورة يجب أن لا يتجاوز 2MB',
+                
+    //             'booking_id.required' => 'معرف الحجز مطلوب',
+    //             'booking_id.exists' => 'الحجز غير موجود',
+    //         ]);
 
-            // 3. التحقق من وجود معلومات شام كاش سابقة للمستخدم
-            $existingShamCash = Sham_cash::where('user_id', $user->id)->first();
+    //         // 3. التحقق من وجود الحجز
+    //         $booking = Booking::find($request->booking_id);
             
-            if ($existingShamCash) {
-                // حذف الصورة القديمة
-                $oldImage = ImageShamCash::where('imageable_id', $existingShamCash->id)
-                    ->where('imageable_type', 'App\Models\ShamCash')
-                    ->first();
-                
-                if ($oldImage) {
-                    if (Storage::disk('public')->exists($oldImage->path)) {
-                        Storage::disk('public')->delete($oldImage->path);
-                    }
-                    $oldImage->delete();
-                }
-                
-                // حذف السجل القديم
-                $existingShamCash->delete();
-            }
+    //         if (!$booking) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'الحجز غير موجود',
+    //                 'error_type' => 'booking_not_found',
+    //                 'status_code' => 404
+    //             ], 404);
+    //         }
 
-            // 4. حفظ معلومات الشام كاش
-            $shamCash = Sham_cash::create([
-                'user_id' => $user->id,
-                'name_in_sham' => $request->name_in_sham,
-            ]);
+    //         // 4. التحقق من أن المستخدم هو صاحب الحجز (المستأجر)
+    //         if ($booking->user_id != $user->id) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'غير مصرح لك، فقط صاحب الحجز يمكنه الدفع بالشام كاش',
+    //                 'error_type' => 'unauthorized',
+    //                 'status_code' => 403
+    //             ], 403);
+    //         }
 
-            // 5. رفع صورة QR
-            $uploadedImage = null;
+    //         // 5. التحقق من أن الحجز في حالة مناسبة للدفع
+    //         if (!in_array($booking->status, ['pending', 'paid'])) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'لا يمكن الدفع بالشام كاش لهذا الحجز لأنه ' . $booking->status,
+    //                 'error_type' => 'invalid_booking_status',
+    //                 'status_code' => 400
+    //             ], 400);
+    //         }
+
+    //         // 6. التحقق من عدم وجود شام كاش مسبق لهذا الحجز
+    //         $existingSham = Sham_cash::where('booking_id', $request->booking_id)->first();
             
-            if ($request->hasFile('qr_image')) {
-                $image = $request->file('qr_image');
+    //         if ($existingSham) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'تم الدفع لهذا الحجز مسبقاً',
+    //                 'error_type' => 'booking_already_paid',
+    //                 'status_code' => 400,
+    //                 'data' => [
+    //                     'sham_cash' => $existingSham,
+    //                 ]
+    //             ], 400);
+    //         }
+
+    //         // 7. التحقق من وجود معلومات شام كاش سابقة للمستخدم (اختياري)
+    //         $existingUserSham = Sham_cash::where('user_id', $user->id)->first();
+            
+    //         if ($existingUserSham) {
+    //             // حذف الصورة القديمة
+    //             $oldImage = ImageShamCash::where('imageable_id', $existingUserSham->id)
+    //                 ->where('imageable_type', 'App\Models\Sham_cash')
+    //                 ->first();
                 
-                if ($image && $image->isValid()) {
-                    // إنشاء اسم فريد للصورة
-                    $imageName = time() . '_qr_' . uniqid() . '.' . $image->getClientOriginalExtension();
+    //             if ($oldImage) {
+    //                 if (Storage::disk('public')->exists($oldImage->path)) {
+    //                     Storage::disk('public')->delete($oldImage->path);
+    //                 }
+    //                 $oldImage->delete();
+    //             }
+                
+    //             // حذف السجل القديم
+    //             $existingUserSham->delete();
+    //         }
+
+    //         // 8. حفظ معلومات الشام كاش
+    //         $shamCash = Sham_cash::create([
+    //             'user_id' => $user->id,
+    //             'name_in_sham' => $request->name_in_sham,
+    //             'booking_id' => $request->booking_id,
+    //         ]);
+
+    //         // 9. رفع الصورة
+    //         $uploadedImage = null;
+            
+    //         if ($request->hasFile('image')) {
+    //             $image = $request->file('image');
+                
+    //             if ($image && $image->isValid()) {
+    //                 // إنشاء اسم فريد للصورة
+    //                 $imageName = time() . '_sham_' . uniqid() . '.' . $image->getClientOriginalExtension();
                     
-                    // حفظ الصورة في مجلد sham_cash
-                    $path = $image->storeAs('sham_cash', $imageName, 'public');
+    //                 // حفظ الصورة في مجلد sham_cash
+    //                 $path = $image->storeAs('sham_cash', $imageName, 'public');
                     
-                    // حفظ في جدول image_sham_cash
-                    $uploadedImage = ImageShamCash::create([
-                        'path' => $path,
-                        'title' => $user->name . '_qr_' . time(),
-                        'imageable_type' => 'App\Models\ShamCash',
-                        'imageable_id' => $shamCash->id,
-                    ]);
-                }
-            }
+    //                 // حفظ في جدول image_sham_cash
+    //                 $uploadedImage = ImageShamCash::create([
+    //                     'path' => $path,
+    //                     'title' => $user->name . '_sham_' . time(),
+    //                     'imageable_type' => 'App\Models\Sham_cash',
+    //                     'imageable_id' => $shamCash->id,
+    //                 ]);
+    //             }
+    //         }
 
-            // 6. تسجيل العملية
-            Log::info('تم إدخال معلومات الشام كاش', [
-                'user_id' => $user->id,
-                'name' => $user->name,
-                'phone' => $user->phone,
-                'sham_cash_id' => $shamCash->id,
-                'name_in_sham' => $request->name_in_sham,
-                'has_qr_image' => $uploadedImage ? true : false,
-                'ip' => $request->ip()
-            ]);
+    //         // 10. تحديث حالة الحجز إلى "paid" بعد الدفع
+    //         $booking->status = 'paid';
+    //         $booking->save();
 
-            // 7. إرجاع الاستجابة
-            return response()->json([
-                'success' => true,
-                'message' => 'تم إدخال معلومات الشام كاش بنجاح',
-                'data' => [
-                    'sham_cash' => $shamCash,
-                    'qr_image' => $uploadedImage,
-                    'qr_image_url' => $uploadedImage ? asset('storage/' . $uploadedImage->path) : null,
-                ]
-            ], 201);
+    //         // 11. تحميل العلاقات
+    //         $shamCash->load('user', 'booking', 'images');
 
-        } catch (ValidationException $e) {
+    //         // 12. تسجيل العملية
+    //         Log::info('تم الدفع بالشام كاش', [
+    //             'user_id' => $user->id,
+    //             'name' => $user->name,
+    //             'phone' => $user->phone,
+    //             'sham_cash_id' => $shamCash->id,
+    //             'name_in_sham' => $request->name_in_sham,
+    //             'booking_id' => $request->booking_id,
+    //             'booking_status' => $booking->status,
+    //             'has_image' => $uploadedImage ? true : false,
+    //             'ip' => $request->ip()
+    //         ]);
+
+    //         // 13. إرجاع الاستجابة
+    //         return response()->json([
+    //             'success' => true,
+    //             'message' => 'تم الدفع بالشام كاش بنجاح',
+    //             'data' => [
+    //                 'sham_cash' => $shamCash,
+    //                 'image' => $uploadedImage,
+    //                 'image_url' => $uploadedImage ? asset('storage/' . $uploadedImage->path) : null,
+    //                 'booking' => [
+    //                     'id' => $booking->id,
+    //                     'start_time' => $booking->start_time,
+    //                     'end_time' => $booking->end_time,
+    //                     'status' => $booking->status,
+    //                     'status_text' => 'تم الدفع',
+    //                 ],
+    //             ]
+    //         ], 201);
+
+    //     } catch (ValidationException $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'فشل التحقق من البيانات',
+    //             'errors' => $e->errors(),
+    //             'error_type' => 'validation_error',
+    //             'status_code' => 422
+    //         ], 422);
+
+    //     } catch (QueryException $e) {
+    //         Log::error('خطأ في قاعدة البيانات أثناء الدفع بالشام كاش', [
+    //             'error' => $e->getMessage(),
+    //             'user_id' => $request->user()?->id ?? null
+    //         ]);
+
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'حدث خطأ في قاعدة البيانات',
+    //             'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+    //             'error_type' => 'database_error',
+    //             'status_code' => 500
+    //         ], 500);
+
+    //     } catch (\Exception $e) {
+    //         Log::error('خطأ في الدفع بالشام كاش', [
+    //             'error' => $e->getMessage(),
+    //             'user_id' => $request->user()?->id
+    //         ]);
+
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'حدث خطأ أثناء الدفع بالشام كاش',
+    //             'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+    //             'error_type' => 'general_error',
+    //             'status_code' => 500
+    //         ], 500);
+    //     }
+    // }
+
+/**
+ * إضافة معلومات الشام كاش (الاسم والصورة) مع ربطها بحجز معين
+ * فقط صاحب الحجز يمكنه الدفع بالشام كاش
+ * + زيادة عداد number_sham للموقف والتحقق من booking_number
+ * + الحفاظ على جميع البيانات القديمة (عدم الحذف)
+ */
+public function store(Request $request)
+{
+    try {
+        // 1. التحقق من أن المستخدم مسجل دخول
+        $user = $request->user();
+        
+        if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' => 'فشل التحقق من البيانات',
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422
-            ], 422);
-
-        } catch (QueryException $e) {
-            Log::error('خطأ في قاعدة البيانات أثناء إدخال معلومات الشام كاش', [
-                'error' => $e->getMessage(),
-                'user_id' => $request->user()?->id ?? null
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ في قاعدة البيانات',
-                'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
-                'error_type' => 'database_error',
-                'status_code' => 500
-            ], 500);
-
-        } catch (\Exception $e) {
-            Log::error('خطأ في إدخال معلومات الشام كاش', [
-                'error' => $e->getMessage(),
-                'user_id' => $request->user()?->id
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء إدخال معلومات الشام كاش',
-                'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
-                'error_type' => 'general_error',
-                'status_code' => 500
-            ], 500);
+                'message' => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
+                'error_type' => 'unauthenticated',
+                'status_code' => 401
+            ], 401);
         }
+
+        // 2. التحقق من صحة البيانات
+        $request->validate([
+            'name_in_sham' => 'required|string|max:191',
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'booking_id' => 'required|exists:bookings,id',
+        ], [
+            'name_in_sham.required' => 'الاسم في الشام كاش مطلوب',
+            'name_in_sham.string' => 'الاسم يجب أن يكون نصاً',
+            'name_in_sham.max' => 'الاسم لا يتجاوز 191 حرف',
+            
+            'image.required' => 'صورة الدفع مطلوبة',
+            'image.image' => 'يجب أن تكون الصورة بصيغة صورة',
+            'image.mimes' => 'الصورة يجب أن تكون بصيغة: jpeg, png, jpg, gif, svg',
+            'image.max' => 'حجم الصورة يجب أن لا يتجاوز 2MB',
+            
+            'booking_id.required' => 'معرف الحجز مطلوب',
+            'booking_id.exists' => 'الحجز غير موجود',
+        ]);
+
+        // 3. التحقق من وجود الحجز
+        $booking = Booking::find($request->booking_id);
+        
+        if (!$booking) {
+            return response()->json([
+                'success' => false,
+                'message' => 'الحجز غير موجود',
+                'error_type' => 'booking_not_found',
+                'status_code' => 404
+            ], 404);
+        }
+
+        // 4. التحقق من أن المستخدم هو صاحب الحجز (المستأجر)
+        if ($booking->user_id != $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'غير مصرح لك، فقط صاحب الحجز يمكنه الدفع بالشام كاش',
+                'error_type' => 'unauthorized',
+                'status_code' => 403
+            ], 403);
+        }
+
+        // 5. التحقق من أن الحجز في حالة مناسبة للدفع
+        if (!in_array($booking->status, ['pending', 'paid'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'لا يمكن الدفع بالشام كاش لهذا الحجز لأنه ' . $booking->status,
+                'error_type' => 'invalid_booking_status',
+                'status_code' => 400
+            ], 400);
+        }
+
+        // 6. التحقق من عدم وجود شام كاش مسبق لهذا الحجز
+        $existingSham = Sham_cash::where('booking_id', $request->booking_id)->first();
+        
+        if ($existingSham) {
+            return response()->json([
+                'success' => false,
+                'message' => 'تم الدفع لهذا الحجز مسبقاً',
+                'error_type' => 'booking_already_paid',
+                'status_code' => 400,
+                'data' => [
+                    'sham_cash' => $existingSham,
+                ]
+            ], 400);
+        }
+
+        // ✅ 7. جلب الموقف المرتبط بالحجز
+        $parkingSpot = Parking_spot::find($booking->spot_id);
+        
+        if (!$parkingSpot) {
+            return response()->json([
+                'success' => false,
+                'message' => 'الموقف المرتبط بالحجز غير موجود',
+                'error_type' => 'parking_not_found',
+                'status_code' => 404
+            ], 404);
+        }
+
+        // ✅ 8. جلب أو إنشاء سطر NumberSham للموقف
+        $numberSham = NumberSham::where('id_parking', $parkingSpot->id)->first();
+        
+        if (!$numberSham) {
+            // إنشاء سطر جديد إذا لم يكن موجوداً
+            $numberSham = NumberSham::create([
+                'number_sham' => 0,
+                'id_parking' => $parkingSpot->id,
+            ]);
+        }
+
+        // ✅ 9. جلب إعدادات الدفع (booking_number)
+        $paymentSettings = PaymentAmount::first();
+        $requiredBookings = $paymentSettings ? $paymentSettings->booking_number : null;
+
+        // ✅ 10. التحقق من أن العداد لم يصل للحد المطلوب
+        if ($requiredBookings && $numberSham->number_sham >= $requiredBookings) {
+            return response()->json([
+                'success' => false,
+                'message' => 'تم استكمال عدد الحجوزات المطلوبة لهذا الموقف، يرجى دفع المبلغ',
+                'error_type' => 'payment_required',
+                'status_code' => 400,
+                'data' => [
+                    'parking_id' => $parkingSpot->id,
+                    'parking_title' => $parkingSpot->title,
+                    'number_sham' => $numberSham->number_sham,
+                    'booking_number' => $requiredBookings,
+                ]
+            ], 400);
+        }
+
+        // ✅ 11. حفظ معلومات الشام كاش الجديدة (بدون حذف القديمة)
+        $shamCash = Sham_cash::create([
+            'user_id' => $user->id,
+            'name_in_sham' => $request->name_in_sham,
+            'booking_id' => $request->booking_id,
+        ]);
+
+        // ✅ 12. رفع الصورة الجديدة (بدون حذف القديمة)
+        $uploadedImage = null;
+        
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            
+            if ($image && $image->isValid()) {
+                // إنشاء اسم فريد للصورة
+                $imageName = time() . '_sham_' . uniqid() . '.' . $image->getClientOriginalExtension();
+                
+                // حفظ الصورة في مجلد sham_cash
+                $path = $image->storeAs('sham_cash', $imageName, 'public');
+                
+                // حفظ في جدول image_sham_cash
+                $uploadedImage = ImageShamCash::create([
+                    'path' => $path,
+                    'title' => $user->name . '_sham_' . time(),
+                    'imageable_type' => 'App\Models\Sham_cash',
+                    'imageable_id' => $shamCash->id,
+                ]);
+            }
+        }
+
+        // 13. تحديث حالة الحجز إلى "paid" بعد الدفع
+        $booking->status = 'paid';
+        $booking->save();
+
+        // ✅ 14. زيادة عداد number_sham بمقدار 1
+        $oldNumberSham = $numberSham->number_sham;
+        $numberSham->number_sham = $numberSham->number_sham + 1;
+        $numberSham->save();
+
+        // ✅ 15. التحقق من وصول العداد إلى booking_number
+        $thresholdReached = false;
+        if ($requiredBookings && $numberSham->number_sham >= $requiredBookings) {
+            $thresholdReached = true;
+
+            // إرسال إشعار لصاحب الموقف
+            try {
+                $owner = User::find($parkingSpot->user_id);
+                
+                if ($owner) {
+                    $message = "🔔 تنبيه دفع\n\n";
+                    $message .= "تم استكمال عدد الحجوزات المطلوبة للموقف: {$parkingSpot->title}\n";
+                    $message .= "عدد الحجوزات: {$numberSham->number_sham}\n";
+                    $message .= "المبلغ المطلوب: " . ($paymentSettings->payment_amount ?? 'غير محدد') . " ل.س\n";
+                    $message .= "الرجاء دفع المبلغ المطلوب.";
+
+                    Log::info('🔔 يجب إرسال إشعار لصاحب الموقف', [
+                        'owner_id' => $owner->id,
+                        'owner_name' => $owner->name,
+                        'parking_id' => $parkingSpot->id,
+                        'parking_title' => $parkingSpot->title,
+                        'number_sham' => $numberSham->number_sham,
+                        'required_bookings' => $requiredBookings,
+                        'payment_amount' => $paymentSettings->payment_amount ?? null,
+                        'message' => $message,
+                    ]);
+
+                    // يمكنك إضافة إرسال FCM هنا
+                    // $this->sendFCMNotification($owner, $parkingSpot, $message);
+                }
+            } catch (\Exception $e) {
+                Log::error('خطأ في إرسال إشعار الدفع', [
+                    'error' => $e->getMessage(),
+                    'parking_id' => $parkingSpot->id
+                ]);
+            }
+        }
+
+        // 16. تحميل العلاقات
+        $shamCash->load('user', 'booking', 'images');
+
+        // 17. تسجيل العملية
+        Log::info('تم الدفع بالشام كاش', [
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'phone' => $user->phone,
+            'sham_cash_id' => $shamCash->id,
+            'name_in_sham' => $request->name_in_sham,
+            'booking_id' => $request->booking_id,
+            'booking_status' => $booking->status,
+            'parking_id' => $parkingSpot->id,
+            'parking_title' => $parkingSpot->title,
+            'old_number_sham' => $oldNumberSham,
+            'new_number_sham' => $numberSham->number_sham,
+            'required_bookings' => $requiredBookings,
+            'threshold_reached' => $thresholdReached,
+            'has_image' => $uploadedImage ? true : false,
+            'ip' => $request->ip()
+        ]);
+
+        // 18. إرجاع الاستجابة
+        return response()->json([
+            'success' => true,
+            'message' => 'تم الدفع بالشام كاش بنجاح',
+            'data' => [
+                'sham_cash' => $shamCash,
+                'image' => $uploadedImage,
+                'image_url' => $uploadedImage ? asset('storage/' . $uploadedImage->path) : null,
+                'booking' => [
+                    'id' => $booking->id,
+                    'start_time' => $booking->start_time,
+                    'end_time' => $booking->end_time,
+                    'status' => $booking->status,
+                    'status_text' => 'تم الدفع',
+                ],
+                'parking' => [
+                    'id' => $parkingSpot->id,
+                    'title' => $parkingSpot->title,
+                    'address' => $parkingSpot->address,
+                ],
+                'number_sham' => [
+                    'id' => $numberSham->id,
+                    'number_sham' => $numberSham->number_sham,
+                    'id_parking' => $numberSham->id_parking,
+                    'old_number_sham' => $oldNumberSham,
+                ],
+                'payment_status' => [
+                    'required_bookings' => $requiredBookings,
+                    'current_number_sham' => $numberSham->number_sham,
+                    'remaining' => $requiredBookings ? max(0, $requiredBookings - $numberSham->number_sham) : null,
+                    'threshold_reached' => $thresholdReached,
+                    'payment_amount' => $paymentSettings->payment_amount ?? null,
+                ],
+                'owner_notified' => $thresholdReached,
+            ]
+        ], 201);
+
+    } catch (ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'فشل التحقق من البيانات',
+            'errors' => $e->errors(),
+            'error_type' => 'validation_error',
+            'status_code' => 422
+        ], 422);
+
+    } catch (QueryException $e) {
+        Log::error('خطأ في قاعدة البيانات أثناء الدفع بالشام كاش', [
+            'error' => $e->getMessage(),
+            'user_id' => $request->user()?->id ?? null
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'حدث خطأ في قاعدة البيانات',
+            'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+            'error_type' => 'database_error',
+            'status_code' => 500
+        ], 500);
+
+    } catch (\Exception $e) {
+        Log::error('خطأ في الدفع بالشام كاش', [
+            'error' => $e->getMessage(),
+            'user_id' => $request->user()?->id
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'حدث خطأ أثناء الدفع بالشام كاش',
+            'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+            'error_type' => 'general_error',
+            'status_code' => 500
+        ], 500);
     }
+}
 
-
-
+    
     /**
-     * عرض معلومات الشام كاش للمستخدم الحالي
+     * عرض معلومات الشام كاش لحجز معين
      */
-    public function getShamCash(Request $request)
+    public function getByBooking(Request $request, $bookingId)
     {
         try {
             $user = $request->user();
@@ -176,29 +553,56 @@ class ShamCashController extends Controller
                 ], 401);
             }
 
-            $shamCash = Sham_cash::where('user_id', $user->id)->first();
+            $booking = Booking::find($bookingId);
+            
+            if (!$booking) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'الحجز غير موجود',
+                    'error_type' => 'booking_not_found',
+                    'status_code' => 404
+                ], 404);
+            }
+
+            // التحقق من الصلاحية (صاحب الحجز أو صاحب الموقف أو مدير)
+            $userRole = Role::where('user_id', $user->id)->first();
+            $isRenter = $booking->user_id == $user->id;
+            $isOwner = $booking->parkingSpot && $booking->parkingSpot->user_id == $user->id;
+            $isAdmin = $userRole && $userRole->role == 1;
+
+            if (!$isRenter && !$isOwner && !$isAdmin) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'غير مصرح لك بمشاهدة هذه المعلومات',
+                    'error_type' => 'unauthorized',
+                    'status_code' => 403
+                ], 403);
+            }
+
+            $shamCash = Sham_cash::where('booking_id', $bookingId)
+                ->with(['user', 'booking', 'images'])
+                ->first();
 
             if (!$shamCash) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'لا توجد معلومات شام كاش',
+                    'message' => 'لا توجد معلومات شام كاش لهذا الحجز',
                     'error_type' => 'not_found',
                     'status_code' => 404
                 ], 404);
             }
 
-            // جلب صورة QR
-            $qrImage = ImageShamCash::where('imageable_id', $shamCash->id)
-                ->where('imageable_type', 'App\Models\ShamCash')
+            $image = ImageShamCash::where('imageable_id', $shamCash->id)
+                ->where('imageable_type', 'App\Models\Sham_cash')
                 ->first();
 
             return response()->json([
                 'success' => true,
-                'message' => 'تم جلب معلومات الشام كاش بنجاح',
+                'message' => 'تم جلب معلومات الشام كاش للحجز بنجاح',
                 'data' => [
                     'sham_cash' => $shamCash,
-                    'qr_image' => $qrImage,
-                    'qr_image_url' => $qrImage ? asset('storage/' . $qrImage->path) : null,
+                    'image' => $image,
+                    'image_url' => $image ? asset('storage/' . $image->path) : null,
                 ]
             ], 200);
 
@@ -210,235 +614,4 @@ class ShamCashController extends Controller
             ], 500);
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-////////////////////
-
-
-    /**
-     * تحديث معلومات الشام كاش (الاسم و/أو صورة QR)
-     * يمكن تحديث الاسم فقط، أو الصورة فقط، أو كليهما معاً
-     */
-    public function updateShamCash(Request $request)
-    {
-        try {
-            // 1. التحقق من أن المستخدم مسجل دخول
-            $user = $request->user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
-                    'error_type' => 'unauthenticated',
-                    'status_code' => 401
-                ], 401);
-            }
-
-            // 2. البحث عن معلومات الشام كاش للمستخدم
-            $shamCash = Sham_cash::where('user_id', $user->id)->first();
-
-            if (!$shamCash) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'لا توجد معلومات شام كاش لتحديثها',
-                    'error_type' => 'not_found',
-                    'status_code' => 404
-                ], 404);
-            }
-
-            // 3. التحقق من وجود بيانات للتحديث
-            $hasName = $request->has('name_in_sham');
-            $hasImage = $request->hasFile('qr_image');
-
-            if (!$hasName && !$hasImage) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'يجب إدخال اسم أو صورة QR للتحديث',
-                    'error_type' => 'no_data_provided',
-                    'status_code' => 400
-                ], 400);
-            }
-
-            // 4. التحقق من صحة البيانات
-            $rules = [];
-            $messages = [];
-
-            if ($hasName) {
-                $rules['name_in_sham'] = 'required|string|max:191';
-                $messages['name_in_sham.required'] = 'الاسم مطلوب';
-                $messages['name_in_sham.string'] = 'الاسم يجب أن يكون نصاً';
-                $messages['name_in_sham.max'] = 'الاسم لا يتجاوز 191 حرف';
-            }
-
-            if ($hasImage) {
-                $rules['qr_image'] = 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048';
-                $messages['qr_image.required'] = 'صورة QR مطلوبة';
-                $messages['qr_image.image'] = 'يجب أن تكون الصورة بصيغة صورة';
-                $messages['qr_image.mimes'] = 'الصورة يجب أن تكون بصيغة: jpeg, png, jpg, gif, svg';
-                $messages['qr_image.max'] = 'حجم الصورة يجب أن لا يتجاوز 2MB';
-            }
-
-            $request->validate($rules, $messages);
-
-            // 5. تخزين البيانات القديمة للتسجيل
-            $oldData = [
-                'name_in_sham' => $shamCash->name_in_sham,
-            ];
-
-            $oldImage = ImageShamCash::where('imageable_id', $shamCash->id)
-                ->where('imageable_type', 'App\Models\ShamCash')
-                ->first();
-
-            if ($oldImage) {
-                $oldData['qr_image_path'] = $oldImage->path;
-            }
-
-            // 6. تحديث البيانات
-            $updatedFields = [];
-
-            // تحديث الاسم
-            if ($hasName) {
-                // التحقق من أن الاسم الجديد مختلف عن القديم
-                if ($shamCash->name_in_sham === $request->name_in_sham) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'الاسم الجديد هو نفس الاسم الحالي',
-                        'error_type' => 'same_name',
-                        'status_code' => 400
-                    ], 400);
-                }
-
-                $shamCash->name_in_sham = $request->name_in_sham;
-                $shamCash->save();
-                $updatedFields[] = 'name';
-            }
-
-            // تحديث صورة QR
-            $uploadedImage = null;
-            if ($hasImage) {
-                // حذف الصورة القديمة
-                if ($oldImage) {
-                    if (Storage::disk('public')->exists($oldImage->path)) {
-                        Storage::disk('public')->delete($oldImage->path);
-                    }
-                    $oldImage->delete();
-                }
-
-                // رفع الصورة الجديدة
-                $image = $request->file('qr_image');
-                
-                if ($image && $image->isValid()) {
-                    $imageName = time() . '_qr_' . uniqid() . '.' . $image->getClientOriginalExtension();
-                    $path = $image->storeAs('sham_cash', $imageName, 'public');
-                    
-                    $uploadedImage = ImageShamCash::create([
-                        'path' => $path,
-                        'title' => $user->name . '_qr_' . time(),
-                        'imageable_type' => 'App\Models\ShamCash',
-                        'imageable_id' => $shamCash->id,
-                    ]);
-                    
-                    $updatedFields[] = 'qr_image';
-                }
-            }
-
-            // 7. جلب الصورة المحدثة
-            $qrImage = ImageShamCash::where('imageable_id', $shamCash->id)
-                ->where('imageable_type', 'App\Models\ShamCash')
-                ->first();
-
-            // 8. تحديد رسالة النجاح
-            $message = '';
-            if (count($updatedFields) === 2) {
-                $message = 'تم تحديث الاسم وصورة QR بنجاح';
-            } elseif (in_array('name', $updatedFields)) {
-                $message = 'تم تحديث الاسم بنجاح';
-            } elseif (in_array('qr_image', $updatedFields)) {
-                $message = 'تم تحديث صورة QR بنجاح';
-            }
-
-            // 9. تسجيل العملية
-            Log::info('تم تحديث معلومات الشام كاش', [
-                'user_id' => $user->id,
-                'name' => $user->name,
-                'phone' => $user->phone,
-                'sham_cash_id' => $shamCash->id,
-                'updated_fields' => $updatedFields,
-                'old_data' => $oldData,
-                'ip' => $request->ip()
-            ]);
-
-            // 10. إرجاع الاستجابة
-            return response()->json([
-                'success' => true,
-                'message' => $message,
-                'data' => [
-                    'sham_cash' => $shamCash,
-                    'qr_image' => $qrImage,
-                    'qr_image_url' => $qrImage ? asset('storage/' . $qrImage->path) : null,
-                    'updated_fields' => $updatedFields,
-                    'old_data' => $oldData,
-                ]
-            ], 200);
-
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'فشل التحقق من البيانات',
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422
-            ], 422);
-
-        } catch (QueryException $e) {
-            Log::error('خطأ في قاعدة البيانات أثناء تحديث الشام كاش', [
-                'error' => $e->getMessage(),
-                'user_id' => $request->user()?->id ?? null
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ في قاعدة البيانات',
-                'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
-                'error_type' => 'database_error',
-                'status_code' => 500
-            ], 500);
-
-        } catch (\Exception $e) {
-            Log::error('خطأ في تحديث الشام كاش', [
-                'error' => $e->getMessage(),
-                'user_id' => $request->user()?->id
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء تحديث معلومات الشام كاش',
-                'error' => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
-                'error_type' => 'general_error',
-                'status_code' => 500
-            ], 500);
-        }
-    }
-
-
-
-
-
 }

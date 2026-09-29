@@ -24,12 +24,12 @@ class UserAdminSeeder extends Seeder
                 'password' => Hash::make('Admin1@2024#Secure'),
                 'language' => 'en',
             ],
-            [
-                'name' => 'Tasneem Farawan',
-                'phone' => '0912345684',
-                'password' => Hash::make('Admin2@2024#Secure'),
-                'language' => 'en',
-            ],
+            // [
+            //     'name' => 'Tasneem Farawan',
+            //     'phone' => '0912345684',
+            //     'password' => Hash::make('Admin2@2024#Secure'),
+            //     'language' => 'en',
+            // ],
         ];
 
         // إنشاء الـ Admins

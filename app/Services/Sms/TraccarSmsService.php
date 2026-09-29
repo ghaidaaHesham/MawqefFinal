@@ -8,103 +8,101 @@ use Exception;
 
 class TraccarSmsService
 {
-    protected $token;
-    protected $baseIp;
-    protected $port;
+    protected string $url;
+    protected string $token;
 
     public function __construct()
     {
-        $this->baseIp = '192.168.1.35';
-        $this->port = 8082;
+        $this->url   = config('services.traccar_sms.url');
         $this->token = config('services.traccar_sms.token');
     }
 
     /**
      * إرسال رسالة SMS
      */
-    public function send(string $phone, string $message): array
-    {
-        $url = "http://{$this->baseIp}:{$this->port}/sms";
-        
-        Log::info('📱 Sending SMS via Traccar', [
-            'phone' => $phone,
-            'url' => $url
+   public function send(string $phone, string $message): array
+{
+    $phone = $this->formatPhoneNumber($phone);
+
+    // ✅ DEBUG - اطبع كل التفاصيل
+    Log::info('DEBUG Traccar Request', [
+        'url' => $this->url,
+        'token' => $this->token,
+        'token_length' => strlen($this->token),
+        'phone_original' => $phone,
+        'phone_formatted' => $phone,
+        'message' => $message,
+        'headers' => [
+            'Authorization' => $this->token,
+            'Accept' => 'application/json',
+        ],
+        'body' => [
+            'to' => $phone,
+            'message' => $message,
+        ],
+    ]);
+
+    try {
+        $response = Http::withHeaders([
+            'Authorization' => $this->token,
+            'Accept'        => 'application/json',
+        ])
+            ->timeout(30)
+            ->post($this->url, [
+                'to'      => $phone,
+                'message' => $message,
+            ]);
+
+        // ✅ DEBUG - اطبع الاستجابة
+        Log::info('DEBUG Traccar Response', [
+            'status' => $response->status(),
+            'body' => $response->body(),
+            'headers' => $response->headers(),
         ]);
 
-        try {
-            $response = Http::withHeaders([
-                'Authorization' => $this->token,
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json',
-            ])->timeout(30)->post($url, [
-                'message' => $message,
-                'to' => $phone,
-            ]);
-
-            if (!$response->successful()) {
-                Log::error('❌ Traccar SMS failed', [
-                    'phone' => $phone,
-                    'status' => $response->status(),
-                    'response' => $response->body()
-                ]);
-                throw new Exception("SMS sending failed: " . $response->body());
-            }
-
-            Log::info('✅ SMS sent successfully', [
-                'phone' => $phone,
-                'response' => $response->json()
-            ]);
-
-            return $response->json();
-
-        } catch (\Exception $e) {
-            Log::error('❌ Traccar SMS error', [
-                'error' => $e->getMessage(),
-                'phone' => $phone
-            ]);
-            throw new Exception("SMS sending failed: " . $e->getMessage());
+        if (!$response->successful()) {
+            throw new Exception(
+                'SMS sending failed with status: ' . $response->status() .
+                ' - Body: ' . $response->body()
+            );
         }
+
+        Log::info('SMS sent successfully', ['phone' => $phone]);
+
+        return [
+            'success'  => true,
+            'response' => $response->json(),
+        ];
+
+    } catch (\Exception $e) {
+        Log::error('SMS sending error', [
+            'phone' => $phone,
+            'error' => $e->getMessage(),
+        ]);
+
+        throw new Exception('SMS sending failed: ' . $e->getMessage());
     }
+}
 
     /**
-     * اختبار الاتصال
+     * تنسيق رقم الهاتف
      */
-    public function testConnection(): array
-    {
-        try {
-            $url = "http://{$this->baseIp}:{$this->port}/sms";
-            
-            $response = Http::withHeaders([
-                'Authorization' => $this->token,
-                'Content-Type' => 'application/json',
-            ])->timeout(5)->get($url);
-
-            return [
-                'success' => $response->successful(),
-                'status' => $response->status(),
-                'url' => $url,
-                'message' => $response->successful() ? '✅ Connected!' : '❌ Connection failed'
-            ];
-
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-                'url' => "http://{$this->baseIp}:{$this->port}/sms",
-                'message' => '❌ Connection failed: ' . $e->getMessage()
-            ];
-        }
-    }
-
-    private function formatPhoneNumber($phone): string
+    private function formatPhoneNumber(string $phone): string
     {
         $phone = preg_replace('/\s+/', '', $phone);
+
         if (preg_match('/^09[0-9]{8}$/', $phone)) {
-            $phone = '+963' . substr($phone, 1);
+            return '+963' . substr($phone, 1);
         }
+
         if (preg_match('/^9[0-9]{8}$/', $phone)) {
-            $phone = '+963' . $phone;
+            return '+963' . $phone;
         }
-        return preg_replace('/[^0-9+]/', '', $phone);
+
+        if (preg_match('/^\+963[0-9]{9}$/', $phone)) {
+            return $phone;
+        }
+
+        return $phone;
     }
 }

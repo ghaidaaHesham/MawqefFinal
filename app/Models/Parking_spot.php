@@ -54,7 +54,11 @@ class Parking_spot extends Model
         return $this->morphMany(Image_documents::class, 'imageable');
     }
  
+  public function numbersham()
+    {
+     return $this->hasMany(NumberSham::class,'id_parking');
 
+    }
 
     // في Model Parking_spot
 

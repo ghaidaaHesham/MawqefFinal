@@ -2,26 +2,25 @@
 
 namespace App\Console;
 
+use App\Models\OTPVerification;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Support\Facades\Log;
 
 class Kernel extends ConsoleKernel
 {
-    /**
-     * Define the application's command schedule.
-     */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // تنظيف OTPs المنتهية يومياً في 3 صباحاً
+        $schedule->call(function () {
+            $deleted = OTPVerification::cleanup();
+            Log::info("OTP Cleanup: {$deleted} records deleted");
+        })->daily()->at('03:00');
     }
 
-    /**
-     * Register the commands for the application.
-     */
     protected function commands(): void
     {
-        $this->load(__DIR__.'/Commands');
-
+        $this->load(__DIR__ . '/Commands');
         require base_path('routes/console.php');
     }
 }

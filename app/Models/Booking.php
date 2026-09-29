@@ -48,4 +48,16 @@ class Booking extends Model
     {
         return $this->belongsTo(User::class, 'user_id');
     }
+
+    public function shamcash()
+    {
+     return $this->hasMany(Sham_cash::class);
+
+    }
+
+
+    public function cancellation()
+{
+    return $this->hasOne(BookingCancellation::class, 'booking_id');
+}
 }

@@ -3,7 +3,7 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use App\Services\TraccarSMSService;
+use App\Services\Sms\TraccarSMSService;
 
 class TraccarSMSServiceProvider extends ServiceProvider
 {

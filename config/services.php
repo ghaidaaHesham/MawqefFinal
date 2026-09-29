@@ -6,12 +6,6 @@ return [
     |--------------------------------------------------------------------------
     | Third Party Services
     |--------------------------------------------------------------------------
-    |
-    | This file is for storing the credentials for third party services such
-    | as Mailgun, Postmark, AWS and more. This file provides the de facto
-    | location for this type of information, allowing packages to have
-    | a conventional file to locate the various service credentials.
-    |
     */
 
     'mailgun' => [
@@ -31,13 +25,10 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
-  
-
-
-    //
-
-'traccar_sms' => [
-    'url' => env('TRACCAR_SMS_URL', 'http://192.168.1.35:8082/sms'),
-    'token' => env('TRACCAR_SMS_TOKEN'),
+    
+  'traccar_sms' => [
+    'url'   => 'http://192.168.1.34:8082/',
+    'token' => '3083bbe6-1a65-4e09-9a45-d702549d75b4',
 ],
+
 ];

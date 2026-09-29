@@ -15,6 +15,7 @@ class Sham_cash extends Model
         
         'name_in_sham',
         'user_id',
+        'booking_id',
         
     ];
      public function images(): MorphMany
@@ -25,5 +26,10 @@ class Sham_cash extends Model
      public function user()
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function booking()
+    {
+        return $this->belongsTo(Booking::class, 'booking_id');
     }
 }

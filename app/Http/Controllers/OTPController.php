@@ -2,362 +2,484 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use App\Services\Sms\TraccarSmsService;
+use App\Http\Requests\RequestOtpRequest;
+use App\Http\Requests\VerifyOtpRequest;
+use App\Http\Requests\ResetPasswordRequest;
 use App\Models\OTPVerification;
+use App\Models\PhonePasswordReset;
 use App\Models\User;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Request;
+use App\Services\OtpService;
+use App\Traits\ApiResponse;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Database\QueryException;
 
-class OTPController extends Controller
+class OtpController extends Controller
 {
-    protected TraccarSmsService $smsService;
+    use ApiResponse;
 
-    public function __construct(TraccarSmsService $smsService)
-    {
-        $this->smsService = $smsService;
-    }
+    public function __construct(
+        private OtpService $otpService
+    ) {}
 
     /**
-     * إرسال OTP
+     * طلب إرسال OTP
      */
-    public function sendOtp(Request $request)
+    public function request(RequestOtpRequest $request)
     {
         try {
-            $request->validate([
-                'phone' => 'required|string|regex:/^09[0-9]{8}$/|exists:users,phone',
-            ]);
+            $result = $this->otpService->request(
+                $request->phone,
+                OTPVerification::PURPOSE_PASSWORD_RESET
+            );
 
-            $phone = $request->phone;
-
-            // التحقق من طلبات متكررة
-            $recentOTP = OTPVerification::where('phone', $phone)
-                ->where('created_at', '>=', now()->subSeconds(30))
-                ->where('is_used', false)
-                ->first();
-
-            if ($recentOTP) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'تم إرسال رمز التحقق بالفعل، يرجى الانتظار',
-                    'error_type' => 'otp_already_sent',
-                    'status_code' => 429,
-                    'remaining_time' => now()->diffInSeconds($recentOTP->created_at->addSeconds(30)),
-                ], 429);
+            if (!$result['allowed']) {
+                return $this->errorResponse(
+                    $result['message'],
+                    $result['reason'],
+                    429,
+                    array_filter([
+                        'wait_seconds' => $result['wait_seconds'] ?? null,
+                        'daily_count'  => $result['daily_count'] ?? null,
+                        'max_per_day'  => $result['max_per_day'] ?? null,
+                    ])
+                );
             }
 
-            // إنشاء OTP
-            $otpRecord = OTPVerification::createOTP($phone);
-            $otp = $otpRecord->otp;
-
-            // إرسال الرسالة
-            $message = "🔐 رمز التحقق الخاص بك هو: {$otp}\n\n⏱ هذا الرمز صالح لمدة 5 دقائق فقط.";
-
-            try {
-                $this->smsService->send($phone, $message);
-            } catch (\Exception $e) {
-                $otpRecord->delete();
-                throw $e;
-            }
-
-            Log::info('✅ OTP sent successfully', [
-                'phone' => $phone,
-                'otp' => $otp,
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => '✅ تم إرسال رمز التحقق إلى رقم هاتفك',
-                'data' => [
-                    'phone' => $phone,
-                    'expires_in' => 5,
-                    'expires_at' => $otpRecord->expires_at->toDateTimeString(),
+            return $this->successResponse(
+                [
+                    'phone'      => $request->phone,
+                    'expires_in' => $result['expires_in'],
+                    'expires_at' => $result['expires_at']->toDateTimeString(),
                 ],
-            ]);
+                'تم إرسال رمز التحقق بنجاح'
+            );
 
         } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422,
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('❌ Error sending OTP', [
+            return $this->validationErrorResponse($e->errors());
+
+        } catch (QueryException $e) {
+            Log::error('DB error in OTP request', [
                 'error' => $e->getMessage(),
                 'phone' => $request->phone ?? null,
             ]);
+            return $this->errorResponse(
+                'حدث خطأ في قاعدة البيانات',
+                'database_error',
+                500
+            );
 
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء إرسال رمز التحقق: ' . $e->getMessage(),
-                'error_type' => 'general_error',
-                'status_code' => 500,
-            ], 500);
+        } catch (\Exception $e) {
+            Log::error('Error in OTP request', [
+                'error' => $e->getMessage(),
+                'phone' => $request->phone ?? null,
+            ]);
+            return $this->errorResponse(
+                'حدث خطأ أثناء إرسال رمز التحقق',
+                'general_error',
+                500
+            );
         }
     }
 
     /**
-     * إعادة إرسال OTP
-     */
-    public function resendOtp(Request $request)
-    {
-        try {
-            $request->validate([
-                'phone' => 'required|string|regex:/^09[0-9]{8}$/|exists:users,phone',
-            ]);
+ * التحقق من OTP
+ */
+public function verify(VerifyOtpRequest $request)
+{
+    try {
+        $result = $this->otpService->verify(
+            $request->phone,
+            $request->otp,
+            OTPVerification::PURPOSE_PASSWORD_RESET
+        );
 
-            $phone = $request->phone;
-
-            // حذف OTP القديم
-            OTPVerification::where('phone', $phone)->where('is_used', false)->delete();
-
-            // إنشاء OTP جديد
-            $otpRecord = OTPVerification::createOTP($phone);
-            $otp = $otpRecord->otp;
-
-            // إرسال الرسالة
-            $message = "🔐 رمز التحقق الخاص بك هو: {$otp}\n\n⏱ هذا الرمز صالح لمدة 5 دقائق فقط.";
-
-            try {
-                $this->smsService->send($phone, $message);
-            } catch (\Exception $e) {
-                $otpRecord->delete();
-                throw $e;
-            }
-
-            Log::info('🔄 OTP resent successfully', [
-                'phone' => $phone,
-                'otp' => $otp,
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => '✅ تم إعادة إرسال رمز التحقق',
-                'data' => [
-                    'phone' => $phone,
-                    'expires_in' => 5,
-                    'expires_at' => $otpRecord->expires_at->toDateTimeString(),
-                ],
-            ]);
-
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422,
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('❌ Error resending OTP', [
-                'error' => $e->getMessage(),
-                'phone' => $request->phone ?? null,
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء إعادة إرسال رمز التحقق: ' . $e->getMessage(),
-                'error_type' => 'general_error',
-                'status_code' => 500,
-            ], 500);
+        if (!$result['success']) {
+            return $this->errorResponse(
+                $result['message'],
+                $result['reason'],
+                400,
+                isset($result['remaining_attempts'])
+                    ? ['remaining_attempts' => $result['remaining_attempts']]
+                    : null
+            );
         }
-    }
 
-    /**
-     * التحقق من OTP
-     */
-    public function verifyOtp(Request $request)
-    {
-        try {
-            $request->validate([
-                'phone' => 'required|string|regex:/^09[0-9]{8}$/',
-                'otp' => 'required|string|size:6',
-            ]);
+        // ✅ البحث عن المستخدم
+        $user = User::where('phone', $request->phone)->first();
 
-            $phone = $request->phone;
-            $otp = $request->otp;
-
-            $otpRecord = OTPVerification::where('phone', $phone)
-                ->where('otp', $otp)
-                ->where('is_used', false)
-                ->first();
-
-            if (!$otpRecord) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'رمز التحقق غير صحيح',
-                    'error_type' => 'invalid_otp',
-                    'status_code' => 400,
-                ], 400);
-            }
-
-            if ($otpRecord->isExpired()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'رمز التحقق منتهي الصلاحية',
-                    'error_type' => 'otp_expired',
-                    'status_code' => 400,
-                ], 400);
-            }
-
-            if (!$otpRecord->canAttempt()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'تم تجاوز عدد المحاولات المسموح بها',
-                    'error_type' => 'max_attempts_exceeded',
-                    'status_code' => 400,
-                ], 400);
-            }
-
-            $otpRecord->incrementAttempts();
-
-            if ($otpRecord->otp === $otp) {
-                $otpRecord->is_used = true;
-                $otpRecord->save();
-
-                $user = User::where('phone', $phone)->first();
-                $resetToken = $user->createToken('password-reset-token')->plainTextToken;
-
-                return response()->json([
-                    'success' => true,
-                    'message' => '✅ تم التحقق من الرمز بنجاح',
-                    'data' => [
-                        'phone' => $phone,
-                        'reset_token' => $resetToken,
-                        'verified_at' => now()->toDateTimeString(),
-                    ],
-                ], 200);
-            }
-
-            return response()->json([
-                'success' => false,
-                'message' => 'رمز التحقق غير صحيح',
-                'error_type' => 'invalid_otp',
-                'status_code' => 400,
-            ], 400);
-
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422,
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('❌ Error verifying OTP', [
-                'error' => $e->getMessage(),
-                'phone' => $request->phone ?? null,
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء التحقق من الرمز',
-                'error_type' => 'general_error',
-                'status_code' => 500,
-            ], 500);
+        if (!$user) {
+            return $this->errorResponse(
+                'المستخدم غير موجود',
+                'user_not_found',
+                404
+            );
         }
-    }
 
-    /**
-     * إعادة تعيين كلمة المرور
-     */
-    public function resetPassword(Request $request)
-    {
+        // ✅ إنشاء reset_token مؤقت
+        $resetToken = PhonePasswordReset::createFor($user->id);
+
+        // ✅ تسجيل العملية
+        Log::info('تم التحقق من OTP وإنشاء reset_token', [
+            'user_id'    => $user->id,
+            'phone'      => $user->phone,
+            'token_id'   => $resetToken->id,
+            'expires_at' => $resetToken->expires_at,
+            'ip'         => $request->ip(),
+        ]);
+
+        // ✅ إرجاع الاستجابة مع reset_token
+        return $this->successResponse(
+            [
+                'phone'       => $request->phone,
+                'reset_token' => $resetToken->token,
+                'expires_in'  => PhonePasswordReset::TOKEN_EXPIRY_MINUTES,
+                'expires_at'  => $resetToken->expires_at->toDateTimeString(),
+                'verified_at' => now()->toDateTimeString(),
+            ],
+            'تم التحقق من الرمز بنجاح'
+        );
+
+    } catch (ValidationException $e) {
+        return $this->validationErrorResponse($e->errors());
+
+    } catch (\Exception $e) {
+        Log::error('Error in OTP verify', [
+            'error' => $e->getMessage(),
+            'phone' => $request->phone ?? null,
+        ]);
+        return $this->errorResponse(
+            'حدث خطأ أثناء التحقق من الرمز',
+            'general_error',
+            500
+        );
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * إعادة تعيين كلمة المرور باستخدام reset_token
+ */
+public function resetPassword(Request $request)
+{
+    try {
+        // ============================================
+        // 1. التحقق من صحة البيانات
+        // ============================================
+        $request->validate([
+            'reset_token'               => 'required|string|size:64',
+            'new_password'              => 'required|string|min:8|confirmed',
+            'new_password_confirmation' => 'required|string|min:8',
+        ], [
+            'reset_token.required' => 'رمز إعادة التعيين مطلوب',
+            'reset_token.string'   => 'رمز إعادة التعيين غير صحيح',
+            'reset_token.size'     => 'رمز إعادة التعيين غير صحيح',
+
+            'new_password.required'  => 'كلمة المرور الجديدة مطلوبة',
+            'new_password.string'    => 'كلمة المرور الجديدة يجب أن تكون نصاً',
+            'new_password.min'       => 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل',
+            'new_password.confirmed' => 'تأكيد كلمة المرور غير متطابق',
+
+            'new_password_confirmation.required' => 'تأكيد كلمة المرور مطلوب',
+            'new_password_confirmation.string'   => 'تأكيد كلمة المرور يجب أن يكون نصاً',
+            'new_password_confirmation.min'      => 'تأكيد كلمة المرور يجب أن يكون 8 أحرف على الأقل',
+        ]);
+
+        // ============================================
+        // 2. البحث عن reset_token صالح
+        // ============================================
+        $resetToken = PhonePasswordReset::findValid($request->reset_token);
+
+        if (!$resetToken) {
+            return $this->errorResponse(
+                'رمز إعادة التعيين غير صالح أو منتهي الصلاحية',
+                'invalid_reset_token',
+                400
+            );
+        }
+
+        // ============================================
+        // 3. البحث عن المستخدم
+        // ============================================
+        $user = User::find($resetToken->user_id);
+
+        if (!$user) {
+            return $this->errorResponse(
+                'المستخدم غير موجود',
+                'user_not_found',
+                404
+            );
+        }
+
+        // ============================================
+        // 4. التحقق من أن كلمة المرور الجديدة مختلفة
+        // ============================================
+        if (Hash::check($request->new_password, $user->password)) {
+            return $this->errorResponse(
+                'كلمة المرور الجديدة يجب أن تكون مختلفة عن الحالية',
+                'same_password',
+                400
+            );
+        }
+
+        // ============================================
+        // 5. Transaction
+        // ============================================
+        DB::beginTransaction();
+
         try {
-            $request->validate([
-                'phone' => 'required|string|regex:/^09[0-9]{8}$/',
-                'reset_token' => 'required|string',
-                'new_password' => 'required|string|min:8|confirmed',
+            // 5.1 تحديث كلمة المرور
+            $user->update([
+                'password' => Hash::make($request->new_password),
             ]);
 
-            $user = User::where('phone', $request->phone)->first();
+            // 5.2 تعليم reset_token كمستخدم
+            $resetToken->markAsUsed();
 
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'المستخدم غير موجود',
-                    'error_type' => 'user_not_found',
-                    'status_code' => 404,
-                ], 404);
-            }
+            // 5.3 حذف جميع OTPs لهذا الرقم
+            OTPVerification::where('phone', $user->phone)->delete();
 
-            $otpRecord = OTPVerification::where('phone', $request->phone)
-                ->where('is_used', true)
-                ->latest()
-                ->first();
-
-            if (!$otpRecord) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'لم يتم التحقق من الرمز',
-                    'error_type' => 'otp_not_verified',
-                    'status_code' => 400,
-                ], 400);
-            }
-
-            if (Hash::check($request->new_password, $user->password)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'كلمة المرور الجديدة يجب أن تكون مختلفة',
-                    'error_type' => 'same_password',
-                    'status_code' => 400,
-                ], 400);
-            }
-
-            $user->password = Hash::make($request->new_password);
-            $user->save();
-
-            OTPVerification::where('phone', $request->phone)->delete();
+            // 5.4 حذف جميع التوكنات (تسجيل خروج من جميع الأجهزة)
             $user->tokens()->delete();
 
-            return response()->json([
-                'success' => true,
-                'message' => '✅ تم إعادة تعيين كلمة المرور بنجاح',
-                'data' => [
-                    'user' => [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'phone' => $user->phone,
-                    ],
-                    'reset_at' => now()->toDateTimeString(),
-                ],
-            ], 200);
+            DB::commit();
 
-        } catch (ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'errors' => $e->errors(),
-                'error_type' => 'validation_error',
-                'status_code' => 422,
-            ], 422);
         } catch (\Exception $e) {
-            Log::error('❌ Error resetting password', [
-                'error' => $e->getMessage(),
-                'phone' => $request->phone ?? null,
+            DB::rollBack();
+            throw $e;
+        }
+
+        // ============================================
+        // 6. تسجيل العملية
+        // ============================================
+        Log::info('تم إعادة تعيين كلمة المرور', [
+            'user_id'  => $user->id,
+            'phone'    => $user->phone,
+            'reset_at' => now()->toDateTimeString(),
+            'ip'       => $request->ip(),
+        ]);
+
+        // ============================================
+        // 7. إرجاع الاستجابة
+        // ============================================
+        return $this->successResponse(
+            [
+                'user' => [
+                    'id'    => $user->id,
+                    'name'  => $user->name,
+                    'phone' => $user->phone,
+                ],
+                'reset_at' => now()->toDateTimeString(),
+            ],
+            'تم إعادة تعيين كلمة المرور بنجاح'
+        );
+
+    } catch (ValidationException $e) {
+        return $this->validationErrorResponse($e->errors());
+
+    } catch (QueryException $e) {
+        Log::error('DB error in password reset', ['error' => $e->getMessage()]);
+
+        return $this->errorResponse(
+            'حدث خطأ في قاعدة البيانات',
+            'database_error',
+            500
+        );
+
+    } catch (\Exception $e) {
+        Log::error('Error in password reset', ['error' => $e->getMessage()]);
+
+        return $this->errorResponse(
+            'حدث خطأ أثناء إعادة تعيين كلمة المرور',
+            'general_error',
+            500
+        );
+    }
+}
+
+
+
+
+
+
+
+
+
+
+/**
+ * تغيير كلمة المرور للمستخدم المسجل
+ * يطلب: current_password, new_password, new_password_confirmation
+ * كل مستخدم يغيّر كلمته فقط (بناءً على التوكن)
+ */
+public function changePassword(Request $request)
+{
+    try {
+        // ============================================
+        // 1. التحقق من أن المستخدم مسجل دخول
+        // ============================================
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json([
+                'success'     => false,
+                'message'     => 'غير مصرح لك، يرجى تسجيل الدخول أولاً',
+                'error_type'  => 'unauthenticated',
+                'status_code' => 401,
+            ], 401);
+        }
+
+        // ============================================
+        // 2. التحقق من صحة البيانات
+        // ============================================
+        $request->validate([
+            'current_password'          => 'required|string|min:8',
+            'new_password'              => 'required|string|min:8|confirmed|different:current_password',
+            'new_password_confirmation' => 'required|string|min:8',
+        ], [
+            'current_password.required' => 'كلمة المرور الحالية مطلوبة',
+            'current_password.string'   => 'كلمة المرور الحالية يجب أن تكون نصاً',
+            'current_password.min'      => 'كلمة المرور الحالية يجب أن تكون 8 أحرف على الأقل',
+            
+            'new_password.required'     => 'كلمة المرور الجديدة مطلوبة',
+            'new_password.string'       => 'كلمة المرور الجديدة يجب أن تكون نصاً',
+            'new_password.min'          => 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل',
+            'new_password.confirmed'    => 'تأكيد كلمة المرور غير متطابق',
+            'new_password.different'    => 'كلمة المرور الجديدة يجب أن تكون مختلفة عن الحالية',
+            
+            'new_password_confirmation.required' => 'تأكيد كلمة المرور مطلوب',
+            'new_password_confirmation.string'   => 'تأكيد كلمة المرور يجب أن يكون نصاً',
+            'new_password_confirmation.min'      => 'تأكيد كلمة المرور يجب أن يكون 8 أحرف على الأقل',
+        ]);
+
+        // ============================================
+        // 3. التحقق من كلمة المرور الحالية
+        // ============================================
+        if (!Hash::check($request->current_password, $user->password)) {
+            Log::warning('محاولة تغيير كلمة مرور فاشلة - كلمة المرور الحالية خاطئة', [
+                'user_id' => $user->id,
+                'phone'   => $user->phone,
+                'ip'      => $request->ip(),
             ]);
 
             return response()->json([
-                'success' => false,
-                'message' => 'حدث خطأ أثناء إعادة تعيين كلمة المرور',
-                'error_type' => 'general_error',
-                'status_code' => 500,
-            ], 500);
+                'success'     => false,
+                'message'     => 'كلمة المرور الحالية غير صحيحة',
+                'error_type'  => 'invalid_current_password',
+                'status_code' => 401,
+            ], 401);
         }
-    }
 
-    /**
-     * اختبار الاتصال بـ Traccar
-     */
-    public function testTraccar()
-    {
-        $result = $this->smsService->testConnection();
+        // ============================================
+        // 4. التحقق من أن كلمة المرور الجديدة مختلفة
+        // ============================================
+        if (Hash::check($request->new_password, $user->password)) {
+            return response()->json([
+                'success'     => false,
+                'message'     => 'كلمة المرور الجديدة يجب أن تكون مختلفة عن الحالية',
+                'error_type'  => 'same_password',
+                'status_code' => 400,
+            ], 400);
+        }
+
+        // ============================================
+        // 5. Transaction
+        // ============================================
+        DB::beginTransaction();
+
+        try {
+            // 5.1 تحديث كلمة المرور
+            $user->update([
+                'password' => Hash::make($request->new_password),
+            ]);
+
+            // 5.2 حذف جميع التوكنات (تسجيل خروج من جميع الأجهزة)
+            // ⚠️ هذا اختياري - يمكنك حذفه إذا أردت إبقاء المستخدم مسجلاً
+            $user->tokens()->delete();
+
+            DB::commit();
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+
+        // ============================================
+        // 6. تسجيل العملية
+        // ============================================
+        Log::info('تم تغيير كلمة المرور', [
+            'user_id'    => $user->id,
+            'phone'      => $user->phone,
+            'ip'         => $request->ip(),
+            'changed_at' => now()->toDateTimeString(),
+        ]);
+
+        // ============================================
+        // 7. إرجاع الاستجابة
+        // ============================================
+        return response()->json([
+            'success' => true,
+            'message' => 'تم تغيير كلمة المرور بنجاح',
+            'data'    => [
+                'user' => [
+                    'id'    => $user->id,
+                    'name'  => $user->name,
+                    'phone' => $user->phone,
+                ],
+                'changed_at'    => now()->toDateTimeString(),
+                'tokens_revoked' => true,
+                'note'          => 'تم تسجيل الخروج من جميع الأجهزة، يرجى تسجيل الدخول مرة أخرى',
+            ],
+        ], 200);
+
+    } catch (ValidationException $e) {
+        return response()->json([
+            'success'     => false,
+            'message'     => 'فشل التحقق من البيانات',
+            'errors'      => $e->errors(),
+            'error_type'  => 'validation_error',
+            'status_code' => 422,
+        ], 422);
+
+    } catch (QueryException $e) {
+        Log::error('DB error in change password', ['error' => $e->getMessage()]);
 
         return response()->json([
-            'success' => $result['success'],
-            'connection' => $result,
-            'message' => $result['success'] ? '✅ Traccar is running!' : '❌ Traccar is not running',
-            'tip' => 'تأكد من فتح تطبيق Traccar على الهاتف وتشغيل الخادم',
-        ]);
+            'success'     => false,
+            'message'     => 'حدث خطأ في قاعدة البيانات',
+            'error'       => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+            'error_type'  => 'database_error',
+            'status_code' => 500,
+        ], 500);
+
+    } catch (\Exception $e) {
+        Log::error('Error in change password', ['error' => $e->getMessage()]);
+
+        return response()->json([
+            'success'     => false,
+            'message'     => 'حدث خطأ أثناء تغيير كلمة المرور',
+            'error'       => config('app.debug') ? $e->getMessage() : 'خطأ داخلي',
+            'error_type'  => 'general_error',
+            'status_code' => 500,
+        ], 500);
     }
+}
 }

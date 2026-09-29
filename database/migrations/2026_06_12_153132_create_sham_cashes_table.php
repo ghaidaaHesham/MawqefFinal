@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id();
             $table->string('name_in_sham');
             $table->uuid('user_id');
+             $table->uuid('booking_id');
             $table->timestamps();
         });
     }

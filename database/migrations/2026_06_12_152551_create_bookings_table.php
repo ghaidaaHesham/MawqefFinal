@@ -20,6 +20,8 @@ return new class extends Migration
             $table->decimal('totale_amount');
             $table->enum('status',['pending','paid','active','completed','cancelled','expired']);
             $table->string('payment_intent_id')->nullable();
+
+            
             $table->timestamps();
         });
     }
